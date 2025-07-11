@@ -70,11 +70,14 @@ CREATE INDEX IF NOT EXISTS idx_annual_leaves_leave_date ON public.annual_leaves(
 -- teacher_leave_balances RLS
 ALTER TABLE public.teacher_leave_balances ENABLE ROW LEVEL SECURITY;
 
+-- Drop policies if they exist, then recreate.
+DROP POLICY IF EXISTS "Teachers can view their own leave balance" ON public.teacher_leave_balances;
 CREATE POLICY "Teachers can view their own leave balance"
 ON public.teacher_leave_balances FOR SELECT
 TO authenticated
 USING (auth.uid() = teacher_id);
 
+DROP POLICY IF EXISTS "Head of School can manage all leave balances" ON public.teacher_leave_balances;
 CREATE POLICY "Head of School can manage all leave balances"
 ON public.teacher_leave_balances FOR ALL
 TO authenticated
@@ -85,18 +88,19 @@ WITH CHECK (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'head')
 -- annual_leaves RLS
 ALTER TABLE public.annual_leaves ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Teachers can manage their own leave applications" ON public.annual_leaves;
 CREATE POLICY "Teachers can manage their own leave applications"
 ON public.annual_leaves FOR ALL
 TO authenticated
 USING (auth.uid() = teacher_id)
 WITH CHECK (
     auth.uid() = teacher_id AND
-    -- Allow insert if status is Pending (default)
-    (status = 'Pending' OR status = 'Cancelled') -- Teachers can cancel their pending requests
-    -- For updates, teachers can only update 'reason' or 'status' to 'Cancelled' if it's currently 'Pending'
-    -- More granular checks might be needed if direct updates are allowed beyond cancellation
+    -- Allow insert if status is Pending (default) or if cancelling a Pending request
+    -- More complex logic for updates (e.g. only reason on pending) might be better handled in application layer or specific DB functions for update
+    ( (COALESCE(OLD.status, 'Pending') = 'Pending' AND status = 'Cancelled') OR (status = 'Pending') )
 );
 
+DROP POLICY IF EXISTS "Head of School can manage all leave applications" ON public.annual_leaves;
 CREATE POLICY "Head of School can manage all leave applications"
 ON public.annual_leaves FOR ALL
 TO authenticated
