@@ -279,45 +279,114 @@ export function AdminDashboard() {
     setLoading(true)
     let successCount = 0
     let failCount = 0
+
+    const validateCommand = (cmd: any): { isValid: boolean; message?: string } => {
+      if (!cmd.command) {
+        return { isValid: false, message: 'Missing command type.' }
+      }
+
+      if (cmd.command === 'AddSchedule') {
+        const requiredFields = ['day', 'time', 'level', 'subject', 'teacher_id']
+        for (const field of requiredFields) {
+          if (!cmd[field] || String(cmd[field]).trim() === '') {
+            return { isValid: false, message: `AddSchedule failed: Missing or empty '${field}'.` }
+          }
+        }
+        // Basic time format validation (HH:MM)
+        if (cmd.time && !/^\d{2}:\d{2}$/.test(cmd.time)) {
+          return { isValid: false, message: `AddSchedule failed: Invalid time format for '${cmd.time}'. Expected HH:MM.`}
+        }
+        // Check if teacher_id is a valid UUID (basic check)
+        if (cmd.teacher_id && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(cmd.teacher_id)) {
+            // Allow matching by name if teacher_id is not a UUID (as AI might provide name)
+            // This will be resolved to an ID later if a match is found by name in `handleAISingleScheduleResponse` logic,
+            // but for direct command processing, we prefer UUIDs.
+            // If it's not a UUID, we assume it's a name to be resolved, or it might fail if no teacher matches.
+            // For now, we'll let it pass if not a UUID, but this could be stricter.
+        }
+      } else if (cmd.command === 'UpdateSchedule') {
+        if (!cmd.id || String(cmd.id).trim() === '') {
+          return { isValid: false, message: `UpdateSchedule failed: Missing 'id'.` }
+        }
+        const updateFields = { ...cmd }
+        delete updateFields.command
+        delete updateFields.id
+        if (Object.keys(updateFields).length === 0) {
+          return { isValid: false, message: `UpdateSchedule failed for ID ${cmd.id}: No fields provided for update.` }
+        }
+        if (updateFields.time && !/^\d{2}:\d{2}$/.test(updateFields.time)) {
+            return { isValid: false, message: `UpdateSchedule failed for ID ${cmd.id}: Invalid time format for '${updateFields.time}'. Expected HH:MM.`}
+        }
+      } else if (cmd.command === 'DeleteSchedule') {
+        if (!cmd.id || String(cmd.id).trim() === '') {
+          return { isValid: false, message: `DeleteSchedule failed: Missing 'id'.` }
+        }
+      } else {
+        return { isValid: false, message: `Unknown command type: ${cmd.command}` }
+      }
+      return { isValid: true }
+    }
+
     for (const cmd of commands) {
+      const validationResult = validateCommand(cmd)
+      if (!validationResult.isValid) {
+        showToast(validationResult.message || `Invalid command: ${cmd.command}`, 'error')
+        failCount++
+        continue // Skip this command
+      }
+
       try {
         if (cmd.command === 'AddSchedule') {
-          const { error } = await supabase.from('schedules').insert({
-            day: cmd.day,
-            time: cmd.time,
-            level: cmd.level,
-            subject: cmd.subject,
-            teacher_id: cmd.teacher_id
-          })
+          const payload = {
+            day: String(cmd.day).trim(),
+            time: String(cmd.time).trim(),
+            level: String(cmd.level).trim(),
+            subject: String(cmd.subject).trim(),
+            teacher_id: String(cmd.teacher_id).trim() // Teacher ID should be a UUID
+          }
+          const { error } = await supabase.from('schedules').insert(payload)
           if (error) throw error
-          showToast(`AddSchedule for ${cmd.level} ${cmd.day} succeeded.`, 'success')
+          showToast(`AddSchedule for ${payload.level} ${payload.day} succeeded.`, 'success')
           successCount++
         } else if (cmd.command === 'UpdateSchedule') {
-          const updateFields = { ...cmd }
-          delete updateFields.command
-          const { id, ...fields } = updateFields
-          const { error } = await supabase.from('schedules').update(fields).eq('id', id)
+          const { id, ...fieldsToUpdate } = cmd
+          delete fieldsToUpdate.command // remove command property before update
+
+          // Trim all string values in fieldsToUpdate
+          const trimmedFieldsToUpdate: { [key: string]: any } = {}
+          for (const key in fieldsToUpdate) {
+            if (typeof fieldsToUpdate[key] === 'string') {
+              trimmedFieldsToUpdate[key] = fieldsToUpdate[key].trim()
+            } else {
+              trimmedFieldsToUpdate[key] = fieldsToUpdate[key]
+            }
+          }
+
+          const { error } = await supabase.from('schedules').update(trimmedFieldsToUpdate).eq('id', String(id).trim())
           if (error) throw error
           showToast(`UpdateSchedule for ID ${id} succeeded.`, 'success')
           successCount++
         } else if (cmd.command === 'DeleteSchedule') {
-          const { error } = await supabase.from('schedules').delete().eq('id', cmd.id)
+          const { error } = await supabase.from('schedules').delete().eq('id', String(cmd.id).trim())
           if (error) throw error
           showToast(`DeleteSchedule for ID ${cmd.id} succeeded.`, 'success')
           successCount++
-        } else {
-          showToast(`Unknown command type: ${cmd.command}`, 'error')
-          failCount++
         }
+        // Unknown command type is already handled by validateCommand
       } catch (e) {
-        showToast(`Command failed: ${cmd.command}${cmd.id ? ' (ID: ' + cmd.id + ')' : ''}`, 'error')
+        const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.'
+        showToast(`Command failed: ${cmd.command}${cmd.id ? ` (ID: ${cmd.id})` : ''}. Error: ${errorMessage}`, 'error')
         failCount++
       }
     }
     setShowAICommandReview(false)
     setAiPlannedCommands([])
     setLoading(false)
-    loadData()
+    if (successCount > 0 || failCount === 0 && commands.length > 0) { // Refresh if at least one success or if all valid commands were processed (even if 0 commands)
+        loadData()
+    } else if (failCount > 0 && successCount === 0 ) {
+        showToast('All AI commands failed processing. No changes applied.', 'warning');
+    }
   }
 
   // Helper to get teacher names for AI context
