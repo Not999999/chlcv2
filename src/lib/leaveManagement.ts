@@ -22,11 +22,45 @@ export interface AnnualLeaveApplication {
   reviewer_notes?: string | null;
 }
 
-const DEFAULT_TOTAL_LEAVES = 14; // Default if no balance record exists
+// Removed hardcoded DEFAULT_TOTAL_LEAVES, will fetch from system_flags
+
+/**
+ * Fetches the system default number of annual leave days.
+ */
+export const getSystemDefaultLeaves = async (): Promise<number> => {
+  const { data, error } = await supabase
+    .from('system_flags')
+    .select('flag_value')
+    .eq('flag_name', 'default_annual_leaves')
+    .single();
+
+  if (error || !data || !data.flag_value) {
+    console.error('Error fetching system default leaves or flag not found:', error);
+    return 14; // Fallback to a hardcoded default if DB value is missing/error
+  }
+  const defaultValue = parseInt(data.flag_value, 10);
+  return isNaN(defaultValue) ? 14 : defaultValue;
+};
+
+/**
+ * Updates the system default number of annual leave days.
+ */
+export const setSystemDefaultLeaves = async (newDefault: number): Promise<void> => {
+  if (newDefault < 0) throw new Error("Default leaves cannot be negative.");
+  const { error } = await supabase
+    .from('system_flags')
+    .update({ flag_value: newDefault.toString(), updated_at: new Date().toISOString() })
+    .eq('flag_name', 'default_annual_leaves');
+
+  if (error) {
+    console.error('Error updating system default leaves:', error);
+    throw error;
+  }
+};
 
 /**
  * Fetches the leave balance for a specific teacher.
- * If no balance record exists, it attempts to create one with default values.
+ * If no balance record exists, it attempts to create one using the system default.
  */
 export const getLeaveBalance = async (teacherId: string): Promise<LeaveBalance> => {
   let { data, error } = await supabase
@@ -35,31 +69,34 @@ export const getLeaveBalance = async (teacherId: string): Promise<LeaveBalance> 
     .eq('teacher_id', teacherId)
     .single();
 
-  if (error && error.code === 'PGRST116') { // PGRST116: "Searched item was not found"
-    // No balance record found, try to create one with defaults
-    console.warn(`No leave balance found for teacher ${teacherId}. Attempting to create with defaults.`);
+  if (error && error.code === 'PGRST116') {
+    console.warn(`No leave balance found for teacher ${teacherId}. Attempting to create with system default.`);
+    const systemDefault = await getSystemDefaultLeaves();
     const { data: newData, error: insertError } = await supabase
       .from('teacher_leave_balances')
-      .insert({ teacher_id: teacherId, total_leaves: DEFAULT_TOTAL_LEAVES, used_leaves: 0 })
+      .insert({ teacher_id: teacherId, total_leaves: systemDefault, used_leaves: 0 })
       .select('total_leaves, used_leaves')
       .single();
 
     if (insertError) {
-      console.error('Error creating default leave balance:', insertError);
-      // Return default zero balance if creation also fails
-      return { total_leaves: DEFAULT_TOTAL_LEAVES, used_leaves: 0, remaining_leaves: DEFAULT_TOTAL_LEAVES };
+      console.error('Error creating default leave balance with system default:', insertError);
+      return { total_leaves: systemDefault, used_leaves: 0, remaining_leaves: systemDefault };
     }
     data = newData;
   } else if (error) {
     console.error('Error fetching leave balance:', error);
-    throw error; // Re-throw other errors
+    throw error;
   }
 
-  if (!data) { // Should be covered by PGRST116 or insert, but as a fallback
-    return { total_leaves: DEFAULT_TOTAL_LEAVES, used_leaves: 0, remaining_leaves: DEFAULT_TOTAL_LEAVES };
+  if (!data) {
+    // This case should ideally not be reached if the above logic is sound.
+    // If it is, it implies an issue fetching or creating the default.
+    console.warn(`Data for leave balance is null for teacher ${teacherId} even after checks. Using fallback default.`);
+    const fallbackDefault = await getSystemDefaultLeaves(); // Try fetching again, or use hardcoded
+    return { total_leaves: fallbackDefault, used_leaves: 0, remaining_leaves: fallbackDefault };
   }
 
-  const total = data.total_leaves || 0;
+  const total = data.total_leaves || (await getSystemDefaultLeaves()); // Fallback if total_leaves is somehow null in DB
   const used = data.used_leaves || 0;
   return {
     total_leaves: total,
@@ -289,21 +326,79 @@ export const cancelLeaveApplicationByTeacher = async (
 
 /**
  * For Head of School to set/update total_leaves for a teacher.
+ * Renamed from setTeacherTotalLeaves to updateTeacherTotalLeaves for clarity if needed, or keep as is.
+ * Ensuring it handles used_leaves correctly if total_leaves is reduced.
  */
-export const setTeacherTotalLeaves = async (teacherId: string, newTotalLeaves: number): Promise<void> => {
+export const updateTeacherTotalLeaves = async (teacherId: string, newTotalLeaves: number): Promise<void> => {
     if (newTotalLeaves < 0) throw new Error("Total leaves cannot be negative.");
+
+    // Fetch current used_leaves to ensure newTotalLeaves isn't less than used_leaves
+    const { data: balance, error: balanceError } = await supabase
+        .from('teacher_leave_balances')
+        .select('used_leaves')
+        .eq('teacher_id', teacherId)
+        .single();
+
+    if (balanceError && balanceError.code !== 'PGRST116') { // PGRST116 means no record, upsert will handle
+        console.error('Error fetching current balance before update:', balanceError);
+        throw new Error(`Could not verify current leave balance for teacher ${teacherId}: ${balanceError.message}`);
+    }
+
+    const currentUsedLeaves = balance?.used_leaves || 0;
+    if (newTotalLeaves < currentUsedLeaves) {
+        throw new Error(`New total leaves (${newTotalLeaves}) cannot be less than already used leaves (${currentUsedLeaves}).`);
+    }
+
     const { error } = await supabase
         .from('teacher_leave_balances')
         .upsert(
-            { teacher_id: teacherId, total_leaves: newTotalLeaves },
+            { teacher_id: teacherId, total_leaves: newTotalLeaves, updated_at: new Date().toISOString() },
             { onConflict: 'teacher_id' }
         );
 
     if (error) {
-        console.error('Error setting total leaves:', error);
-        throw new Error(`Failed to set total leaves for teacher ${teacherId}: ${error.message}`);
+        console.error('Error updating teacher total leaves:', error);
+        throw new Error(`Failed to update total leaves for teacher ${teacherId}: ${error.message}`);
     }
 };
+
+
+/**
+ * Fetches all teacher leave balances with their names.
+ */
+export interface TeacherLeaveBalanceDetails extends LeaveBalance {
+    teacher_id: string;
+    teacher_name: string;
+}
+
+export const getAllTeacherLeaveBalancesWithDetails = async (): Promise<TeacherLeaveBalanceDetails[]> => {
+    const { data, error } = await supabase
+        .from('teacher_leave_balances')
+        .select(`
+            teacher_id,
+            total_leaves,
+            used_leaves,
+            user:users ( name )
+        `);
+
+    if (error) {
+        console.error('Error fetching all teacher leave balances:', error);
+        throw error;
+    }
+
+    return (data || []).map(item => {
+        const total = item.total_leaves || 0;
+        const used = item.used_leaves || 0;
+        return {
+            teacher_id: item.teacher_id,
+            teacher_name: (item.user as any)?.name || 'Unknown Teacher', // Type assertion for joined user
+            total_leaves: total,
+            used_leaves: used,
+            remaining_leaves: total - used,
+        };
+    });
+};
+
 
 /**
  * Fetches all leave applications for admin/head view with filtering and sorting.
