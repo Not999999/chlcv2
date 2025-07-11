@@ -24,13 +24,20 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Drop the trigger if it exists, then recreate it to make the script idempotent
+DROP TRIGGER IF EXISTS teacher_leave_balance_updated_at_trigger ON public.teacher_leave_balances;
 CREATE TRIGGER teacher_leave_balance_updated_at_trigger
 BEFORE UPDATE ON public.teacher_leave_balances
 FOR EACH ROW
 EXECUTE FUNCTION public.update_leave_balance_timestamp();
 
 -- 2. annual_leaves table
-CREATE TYPE leave_status AS ENUM ('Pending', 'Approved', 'Rejected', 'Cancelled'); -- Added Cancelled
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'leave_status') THEN
+        CREATE TYPE leave_status AS ENUM ('Pending', 'Approved', 'Rejected', 'Cancelled');
+    END IF;
+END$$;
 
 CREATE TABLE IF NOT EXISTS public.annual_leaves (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
