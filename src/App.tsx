@@ -13,14 +13,14 @@ import Maintenance from './pages/Maintenance'
 import ReportViewer from './pages/ReportViewer'
 import { IntroSplash } from './components/IntroSplash'
 import { MaintenanceProvider, useMaintenanceStatus } from './contexts/MaintenanceContext'
-import { ThemeProvider } from './contexts/ThemeContext' // Import ThemeProvider
-import ThemeApplicator from './components/ThemeApplicator' // Import ThemeApplicator
+// ThemeProvider and ThemeApplicator imports are removed
 import { getCurrentStaffUser } from './lib/auth'
+import { Layout } from './components/Layout'; // Import the classic Layout
 
-// Updated MaintenanceGuardContent to integrate ThemeApplicator
+// Reverted MaintenanceGuardContent
 function MaintenanceGuardContent({ children }: { children: React.ReactNode }) {
   const { isMaintenanceModeActive, isLoadingMaintenanceStatus } = useMaintenanceStatus();
-  const location = window.location.pathname;
+  const location = window.location.pathname; // Consider useLocation() from react-router-dom if deeper nesting
   const user = getCurrentStaffUser();
 
   if (isLoadingMaintenanceStatus) {
@@ -34,38 +34,35 @@ function MaintenanceGuardContent({ children }: { children: React.ReactNode }) {
 
   if (isMaintenanceModeActive) {
     if (user?.role === 'creator') {
-      // Creator sees the site with a banner, wrapped by the chosen theme's layout
+      // Creator sees the site with a banner.
+      // The standard Layout will be used by pages rendered via {children}.
       return (
-        <ThemeApplicator>
-          <> {/* Using fragment to group banner and content for ThemeApplicator's children */}
-            <div className="fixed top-0 left-0 right-0 bg-red-600 text-white p-3 text-center z-[9998] shadow-lg">
-              <p className="text-sm font-semibold">
-                ⚠️ MAINTENANCE MODE IS ACTIVE. Regular users are seeing the maintenance page. You have full access.
-              </p>
-            </div>
-            {/*
-              The ThemeApplicator will provide its own Layout (Classic or Animated).
-              That Layout needs to handle the children correctly.
-              If the banner is outside the themed Layout, padding needs to be applied carefully.
-              Assuming the Layouts provided by ThemeApplicator will render children into their main content area.
-              The pt-12 might need to be applied inside the Layout components or handled by them if they are aware of this banner.
-              For now, applying it here to the children of ThemeApplicator.
-            */}
-            <div className="pt-12">
-              {children} {/* children are the Routes */}
-            </div>
-          </>
-        </ThemeApplicator>
+        <>
+          <div className="fixed top-0 left-0 right-0 bg-red-600 text-white p-3 text-center z-[9998] shadow-lg">
+            <p className="text-sm font-semibold">
+              ⚠️ MAINTENANCE MODE IS ACTIVE. Regular users are seeing the maintenance page. You have full access.
+            </p>
+          </div>
+          {/*
+            The individual pages are expected to use the Layout component themselves.
+            If Layout was globally applied before, this structure assumes pages handle their own Layout.
+            The pt-12 is to avoid content being hidden by the fixed banner.
+            Alternatively, a global Layout wrapper could be added here if all pages need it.
+            For now, this provides the space for the banner.
+          */}
+          <div className="pt-12">
+            {children} {/* children are the Routes, which render pages that use Layout */}
+          </div>
+        </>
       );
     } else if (location !== '/creator-login') {
-      // Non-creators see the Maintenance page (unthemed or simply styled)
       return <Maintenance />;
     }
   }
 
-  // If not in maintenance mode, or special cases like creator on creator-login
-  // Wrap the normal content flow with ThemeApplicator
-  return <ThemeApplicator>{children}</ThemeApplicator>;
+  // If not in maintenance mode, render children directly.
+  // Pages are expected to use their own Layout component.
+  return <>{children}</>;
 }
 
 function App() {
@@ -80,10 +77,10 @@ function App() {
       {showSplash && <IntroSplash onFinish={handleSplashFinish} />}
       <Router>
         <MaintenanceProvider>
-          <ThemeProvider> {/* ThemeProvider wraps MaintenanceGuardContent and its children */}
-            <MaintenanceGuardContent>
-              <Routes>
-                {/* Public Routes */}
+          {/* ThemeProvider is removed */}
+          <MaintenanceGuardContent>
+            <Routes>
+              {/* Public Routes */}
                 <Route path="/creator-login" element={<CreatorLogin />} />
             <Route path="/login" element={<StaffLogin />} />
             
