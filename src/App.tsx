@@ -133,10 +133,10 @@ function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
           </Routes>
         </MaintenanceGuardContent>
-      </ThemeProvider>
-    </MaintenanceProvider>
-  </Router>
-</ToastProvider>
+        {/* ThemeProvider was here, now removed */}
+      </MaintenanceProvider>
+    </Router>
+  </ToastProvider>
   );
 }
 
