@@ -135,10 +135,12 @@ function App() {
             {/* Default redirect */}
             <Route path="/" element={<Navigate to="/login" replace />} />
           </Routes>
-        </MaintenanceGuard>
-      </Router>
-    </ToastProvider>
-  )
+        </MaintenanceGuardContent>
+      </ThemeProvider>
+    </MaintenanceProvider>
+  </Router>
+</ToastProvider>
+  );
 }
 
-export default App
+export default App;
