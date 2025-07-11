@@ -69,10 +69,17 @@ export const getLeaveBalance = async (teacherId: string): Promise<LeaveBalance> 
 };
 
 /**
- * Fetches all leave applications for a specific teacher.
+ * Fetches leave applications for a specific teacher with pagination.
  */
-export const getTeacherLeaveApplications = async (teacherId: string): Promise<AnnualLeaveApplication[]> => {
-  const { data, error } = await supabase
+export const getTeacherLeaveApplications = async (
+  teacherId: string,
+  page: number = 1,
+  pageSize: number = 10 // Default page size
+): Promise<{ applications: AnnualLeaveApplication[], count: number | null }> => {
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data, error, count } = await supabase
     .from('annual_leaves')
     .select(`
       id,
@@ -86,15 +93,17 @@ export const getTeacherLeaveApplications = async (teacherId: string): Promise<An
       users_reviewed_by:users!annual_leaves_reviewed_by_fkey ( name ),
       decision_time,
       reviewer_notes
-    `)
+    `, { count: 'exact' }) // Request total count for pagination
     .eq('teacher_id', teacherId)
-    .order('leave_date', { ascending: false });
+    .order('leave_date', { ascending: false })
+    .order('created_at', { ascending: false }) // Secondary sort for consistent ordering
+    .range(from, to);
 
   if (error) {
     console.error('Error fetching teacher leave applications:', error);
     throw error;
   }
-  return data as AnnualLeaveApplication[];
+  return { applications: data as AnnualLeaveApplication[], count };
 };
 
 /**
