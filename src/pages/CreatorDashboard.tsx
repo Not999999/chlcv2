@@ -35,7 +35,9 @@ export function CreatorDashboard() {
     }
   })
   const [newApiKey, setNewApiKey] = React.useState('')
-  const [maintenanceMode, setMaintenanceMode] = useState(localStorage.getItem('maintenanceMode') === 'true')
+  // Remove localStorage for maintenanceMode, will be fetched from Supabase
+  const [maintenanceModeActive, setMaintenanceModeActive] = useState(false)
+  const [maintenanceLoading, setMaintenanceLoading] = useState(true)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [showSystemSettings, setShowSystemSettings] = useState(false)
   const [aiAssistantEnabled, setAIAssistantEnabled] = useState(true)
@@ -43,10 +45,12 @@ export function CreatorDashboard() {
   const [verbosity, setVerbosity] = useState(5)
 
   React.useEffect(() => {
-    loadData()
+    loadCreatorData()
   }, [])
 
-  const loadData = async () => {
+  const loadCreatorData = async () => {
+    setLoading(true) // Combined loading state
+    setMaintenanceLoading(true)
     try {
       // Load users
       const { data: userData, error: userError } = await supabase
@@ -57,7 +61,7 @@ export function CreatorDashboard() {
 
       if (userError) {
         console.error('Users query error:', userError)
-        throw new Error('Please contact creator - Shan')
+        throw new Error('Failed to load users. Please contact Creator - Shan')
       }
       setUsers(userData || [])
 
@@ -70,27 +74,47 @@ export function CreatorDashboard() {
 
       if (aiError) {
         console.error('AI settings query error:', aiError)
+        // Not throwing error for AI settings, can be configured later
+        showToast('Could not load AI settings, they might need to be configured.', 'warning')
       } else {
         setAiSettings(aiData)
         if (aiData) {
           setAiForm({
             api_keys: aiData.api_keys || [],
             model: aiData.model || '',
-            access_level: aiData.access_level || {
-              creator: true,
-              admin: true,
-              head: true,
-              teacher: false
-            }
+            access_level: aiData.access_level || { creator: true, admin: true, head: true, teacher: false }
           })
         }
       }
+
+      // Load Maintenance Mode status
+      const { data: maintenanceData, error: maintenanceError } = await supabase
+        .from('system_flags')
+        .select('is_active')
+        .eq('flag_name', 'maintenance_mode')
+        .single()
+
+      if (maintenanceError) {
+        console.error('Maintenance mode fetch error:', maintenanceError)
+        // If the flag doesn't exist, it's a problem, but we can assume false and let creator fix.
+        // Or, ensure migration always creates it. Migration does attempt this.
+        showToast('Could not fetch maintenance mode status. Defaulting to OFF. Please check Supabase table `system_flags`.', 'error')
+        setMaintenanceModeActive(false) // Default to false if fetch fails
+      } else if (maintenanceData) {
+        setMaintenanceModeActive(maintenanceData.is_active)
+      } else {
+        // Flag not found, this is an issue. Migration should handle this.
+        showToast('Maintenance mode flag not found in `system_flags`. Defaulting to OFF. Please ensure it is set up.', 'error');
+        setMaintenanceModeActive(false);
+      }
+
     } catch (error) {
-      console.error('Error loading data:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Please contact creator - Shan'
+      console.error('Error loading creator dashboard data:', error)
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred while loading data.'
       showToast(errorMessage, 'error')
     } finally {
       setLoading(false)
+      setMaintenanceLoading(false)
     }
   }
 
@@ -282,14 +306,34 @@ export function CreatorDashboard() {
   }
 
   // Maintenance toggle handler
-  const handleToggleMaintenance = () => {
-    const newValue = !maintenanceMode
-    setMaintenanceMode(newValue)
-    localStorage.setItem('maintenanceMode', newValue ? 'true' : 'false')
-    showToast(newValue ? 'Maintenance mode enabled' : 'Maintenance mode disabled', 'info')
-  }
+  const handleToggleMaintenance = async () => {
+    const newValue = !maintenanceModeActive;
+    setMaintenanceLoading(true);
+    try {
+      const { error } = await supabase
+        .from('system_flags')
+        .update({ is_active: newValue, updated_at: new Date().toISOString() }) // Explicitly set updated_at if trigger isn't immediate/reliable for UI
+        .eq('flag_name', 'maintenance_mode');
 
-  if (loading) {
+      if (error) {
+        console.error('Maintenance mode update error:', error);
+        showToast(`Failed to update maintenance mode: ${error.message}`, 'error');
+        // Revert UI state if Supabase update fails
+        setMaintenanceModeActive(!newValue);
+      } else {
+        setMaintenanceModeActive(newValue);
+        showToast(newValue ? 'Maintenance mode ENABLED globally.' : 'Maintenance mode DISABLED globally.', newValue ? 'warning' : 'success');
+      }
+    } catch (error) {
+      console.error('Error in handleToggleMaintenance:', error);
+      showToast('An unexpected error occurred while toggling maintenance mode.', 'error');
+      setMaintenanceModeActive(!newValue); // Revert on catch
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  };
+
+  if (loading) { // General loading for user data, AI settings
     return (
       <Layout title="Creator Dashboard" isCreatorLayout>
         <div className="flex items-center justify-center py-12">
@@ -303,14 +347,33 @@ export function CreatorDashboard() {
     <Layout title="Creator Dashboard" isCreatorLayout>
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {/* Maintenance Mode Toggle */}
-        <div className="bg-yellow-50 rounded-lg p-4 flex flex-col gap-2">
+        <div className={`rounded-lg p-4 flex flex-col gap-2 shadow-sm border ${maintenanceModeActive ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+          <h3 className={`font-semibold text-base mb-1 ${maintenanceModeActive ? 'text-red-800' : 'text-green-800'}`}>
+            Global Maintenance Mode
+          </h3>
           <button
             onClick={handleToggleMaintenance}
-            className={`w-full px-4 py-2 rounded-md font-semibold text-sm transition-colors ${maintenanceMode ? 'bg-yellow-600 text-white' : 'bg-yellow-200 text-yellow-900 hover:bg-yellow-300'}`}
+            disabled={maintenanceLoading}
+            className={`w-full px-4 py-2.5 rounded-md font-semibold text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2
+              ${maintenanceLoading
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : maintenanceModeActive
+                  ? 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500'
+                  : 'bg-green-600 text-white hover:bg-green-700 focus:ring-green-500'
+              }`}
           >
-            {maintenanceMode ? 'Disable Maintenance Mode' : 'Maintenance Mode'}
+            {maintenanceLoading
+              ? 'Updating...'
+              : maintenanceModeActive
+                ? 'DEACTIVATE Maintenance Mode'
+                : 'ACTIVATE Maintenance Mode'}
           </button>
-          <span className="text-xs text-yellow-700">When enabled, all non-creator users see a maintenance message.</span>
+          <p className={`text-xs ${maintenanceModeActive ? 'text-red-700' : 'text-gray-600'}`}>
+            {maintenanceModeActive
+              ? 'Site is currently INACCESSIBLE to non-creator users.'
+              : 'Site is currently LIVE for all users.'}
+          </p>
+          <span className="text-xs text-gray-500 mt-1">When activated, all non-creator users will see a maintenance page. You will retain full access.</span>
         </div>
 
         {/* System Settings Panel */}
