@@ -5,7 +5,13 @@ import { AIButton } from '../components/AIButton'
 import { useToast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
 import { getCurrentStaffUser } from '../lib/auth'
-import { Users, AlertCircle, BarChart3, CheckCircle, RefreshCw, FileText, Monitor, Brain, ChevronDown, ChevronUp } from 'lucide-react'
+import { Users, AlertCircle, BarChart3, CheckCircle, RefreshCw, FileText, Monitor, Brain, ChevronDown, ChevronUp, Briefcase, ThumbsUp, ThumbsDown, MessageSquare } from 'lucide-react'
+import {
+  getPendingLeaveApplicationsForAdmin,
+  processLeaveApplicationByAdmin,
+  setTeacherTotalLeaves, // Added for future use
+  AnnualLeaveApplication
+} from '../lib/leaveManagement' // Assuming path
 
 export function HeadDashboard() {
   const navigate = useNavigate()
@@ -14,28 +20,51 @@ export function HeadDashboard() {
   const [teacherStatus, setTeacherStatus] = React.useState<any[]>([])
   const [behaviorReports, setBehaviorReports] = React.useState<any[]>([])
   const [activeSessions, setActiveSessions] = React.useState<any[]>([])
-  const [loading, setLoading] = React.useState(true)
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'classes'>('overview')
+  const [loading, setLoading] = React.useState(true) // General loading
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'classes' | 'leaves'>('overview')
   const [lastRefresh, setLastRefresh] = React.useState(new Date())
   const [expandedReports, setExpandedReports] = React.useState<Set<string>>(new Set())
 
-  const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD format
+  // Annual Leave States for Head
+  const [pendingLeaveApps, setPendingLeaveApps] = React.useState<AnnualLeaveApplication[]>([]);
+  const [loadingLeaveApps, setLoadingLeaveApps] = React.useState(true);
+  const [processingLeaveId, setProcessingLeaveId] = React.useState<string | null>(null);
+  const [showNotesModal, setShowNotesModal] = React.useState(false);
+  const [currentLeaveForNotes, setCurrentLeaveForNotes] = React.useState<AnnualLeaveApplication | null>(null);
+  const [reviewerNotes, setReviewerNotes] = React.useState("");
+
+  const today = new Date().toLocaleDateString('en-CA')
+
+  const loadAllHeadData = React.useCallback(async () => {
+    setLoading(true);
+    setLoadingLeaveApps(true);
+
+    try {
+      await Promise.all([
+        loadTeacherStatus(),
+        loadBehaviorReports(),
+        loadActiveSessions(),
+        loadPendingLeaveApplications()
+      ]);
+    } catch (error) {
+      console.error("Error loading head dashboard data:", error);
+    } finally {
+      setLoading(false);
+      setLastRefresh(new Date());
+    }
+  }, []);
 
   React.useEffect(() => {
-    loadTeacherStatus()
-    loadBehaviorReports()
-    loadActiveSessions()
+    loadAllHeadData();
     
-    // Auto-refresh every 60 seconds
     const interval = setInterval(() => {
-      loadTeacherStatus()
-      if (activeTab === 'classes') {
-        loadActiveSessions()
-      }
-    }, 60000)
+      loadTeacherStatus();
+      if (activeTab === 'classes') loadActiveSessions();
+      if (activeTab === 'leaves') loadPendingLeaveApplications();
+    }, 60000);
 
-    return () => clearInterval(interval)
-  }, [activeTab])
+    return () => clearInterval(interval);
+  }, [activeTab, loadAllHeadData]);
 
   const loadTeacherStatus = async () => {
     try {
