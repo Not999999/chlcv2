@@ -39,9 +39,31 @@ const AnimatedIntro: React.FC<AnimatedIntroProps> = ({ onFinish }) => {
     handleAnimationComplete();
   };
 
+  const [numStars, setNumStars] = useState(100); // Default to desktop
+
+  useEffect(() => {
+    const getStarCount = () => {
+      if (typeof window !== 'undefined') {
+        if (window.innerWidth < 640) return 30; // Small screens (mobile)
+        if (window.innerWidth < 1024) return 60; // Medium screens (tablet)
+        return 100; // Large screens (desktop)
+      }
+      return 100; // Default for SSR or if window is not defined
+    };
+    setNumStars(getStarCount());
+
+    // Optional: Add resize listener if dynamic change is desired while intro is visible,
+    // but for a short intro, mount check is often enough.
+    // const handleResize = () => setNumStars(getStarCount());
+    // window.addEventListener('resize', handleResize);
+    // return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Star background (simple version)
   const StarField = useMemo(() => {
-    const stars = Array.from({ length: 100 }).map((_, i) => ({
+    // Ensure numStars has a valid number before creating array
+    const currentNumStars = typeof numStars === 'number' && numStars > 0 ? numStars : 30;
+    const stars = Array.from({ length: currentNumStars }).map((_, i) => ({
       id: i,
       x: Math.random() * 100,
       y: Math.random() * 100,
@@ -120,8 +142,10 @@ const AnimatedIntro: React.FC<AnimatedIntroProps> = ({ onFinish }) => {
             variants={titleVariants}
             initial="hidden"
             animate="visible"
-            className="text-6xl sm:text-7xl md:text-8xl font-bold mb-3 sm:mb-4 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-yellow-300"
-            style={{ WebkitBackgroundClip: 'text', backgroundClip: 'text' }} // For Tailwind JIT
+            // Adjusted base font size for smaller screens, sm and md will scale it up.
+            // Added default text color as fallback for browsers not supporting background-clip: text
+            className="text-5xl sm:text-6xl md:text-7xl font-bold mb-2 sm:mb-3 text-yellow-300 supports-[background-clip:text]:text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-yellow-300"
+            style={{ WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
           >
             {eduSyncText.split("").map((char, index) => (
               <motion.span key={index} variants={letterVariants} className="inline-block">
@@ -134,7 +158,8 @@ const AnimatedIntro: React.FC<AnimatedIntroProps> = ({ onFinish }) => {
             variants={subtitleVariants}
             initial="hidden"
             animate="visible"
-            className="text-xl sm:text-2xl text-gray-300"
+            // Adjusted base font size
+            className="text-lg sm:text-xl md:text-2xl text-gray-300"
           >
             {byShanText}
           </motion.p>
@@ -143,11 +168,13 @@ const AnimatedIntro: React.FC<AnimatedIntroProps> = ({ onFinish }) => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: eduSyncText.length * 0.15 + 1.2, duration: 0.5 }}
-            className="mt-12"
+            // Responsive margin for the skip button container
+            className="mt-8 sm:mt-10 md:mt-12"
           >
             <button
               onClick={handleSkip}
-              className="px-8 py-3 bg-white/5 text-gray-300 rounded-full hover:bg-white/10 border border-white/20 transition-colors text-sm backdrop-blur-sm"
+              // Responsive padding for the skip button
+              className="px-6 sm:px-8 py-2 sm:py-3 bg-white/5 text-gray-300 rounded-full hover:bg-white/10 border border-white/20 transition-colors text-sm backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 focus:ring-offset-gray-950"
             >
               Skip Intro
             </button>

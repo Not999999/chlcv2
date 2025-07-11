@@ -416,7 +416,7 @@ export function CreatorDashboard() {
                         }
                       }}
                       disabled={isLoadingTheme}
-                      className={`w-full px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1
+                      className={`w-full px-3 py-2.5 text-sm font-medium rounded-md transition-all duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1
                         ${selectedDisplayTheme === themeOption
                           ? 'bg-purple-600 text-white shadow-sm'
                           : 'bg-transparent text-gray-600 hover:bg-purple-100 hover:text-purple-700'}

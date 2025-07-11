@@ -1,44 +1,39 @@
 /*
-  Placeholder for global styles specific to the Animated Theme.
-  For example:
+  Global styles specific to the Animated Theme.
+  These styles will be applied when html[data-theme="animated"] is active.
 */
 
-/* Apply a different default font or body background when animated theme is active */
 /*
+  Browser Compatibility Notes for Animated Theme:
+  - `backdrop-filter: blur()` (used for header/footer in AnimatedLayout and skip button in AnimatedIntro):
+    Gracefully degrades to a semi-transparent background in browsers that don't support it (e.g., Firefox older than 103 without flags).
+    The visual effect is diminished, but layout/functionality remains intact.
+  - `background-clip: text` (used for text gradients, e.g., "EduSync" title in AnimatedIntro):
+    Supported in most modern browsers. If not supported, text might appear solid or transparent depending on specific CSS.
+    This is considered a progressive enhancement for the animated theme.
+*/
+
+/* Example: Define animated theme specific CSS variables if needed for deeper customization */
+/*
+html[data-theme="animated"] {
+  --theme-primary-color: #8A2BE2;
+  --theme-text-color: #EAEAEA;
+  --theme-background-main: linear-gradient(to bottom right, #1a0c2e, #2a104a);
+}
+
 html[data-theme="animated"] body {
-  font-family: 'YourAnimatedThemeFont', sans-serif;
-  background-color: #1a1a2e;
-  color: #e0e0e0;
+  font-family: 'Inter', sans-serif; // Example: Using a specific font for the animated theme
+  background: var(--theme-background-main);
+  color: var(--theme-text-color);
 }
 */
 
-/* Example: Animated theme specific button styles (if not handled by utility classes) */
+/* Add any global responsive overrides for the animated theme here if necessary */
+/* For example, if base font size for animated theme should be different on mobile: */
 /*
-html[data-theme="animated"] .custom-animated-button {
-  background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
-  color: white;
-  padding: 10px 20px;
-  border-radius: 8px;
-  border: none;
-  transition: transform 0.2s ease-in-out;
-}
-
-html[data-theme="animated"] .custom-animated-button:hover {
-  transform: scale(1.05);
-}
-*/
-
-/* Placeholder for star swapping animation background if done via CSS */
-/*
-html[data-theme="animated"] .star-background {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: -1;
-  overflow: hidden;
-  background: #000; // Or a dark gradient
-  // Add ::before/::after pseudo-elements for star layers
+@media (max-width: 640px) {
+  html[data-theme="animated"] body {
+    font-size: 14px;
+  }
 }
 */
