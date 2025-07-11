@@ -65,50 +65,26 @@ CREATE INDEX IF NOT EXISTS idx_annual_leaves_status ON public.annual_leaves(stat
 CREATE INDEX IF NOT EXISTS idx_annual_leaves_leave_date ON public.annual_leaves(leave_date);
 
 
--- 3. RLS Policies
+-- 3. RLS Policies (Modified to be OFF by default as per user request)
 
--- teacher_leave_balances RLS
-ALTER TABLE public.teacher_leave_balances ENABLE ROW LEVEL SECURITY;
-
--- Drop policies if they exist, then recreate.
+-- teacher_leave_balances: RLS Disabled
+ALTER TABLE public.teacher_leave_balances DISABLE ROW LEVEL SECURITY;
+-- Ensure any pre-existing policies are removed if RLS is being turned off globally for this table by this migration
 DROP POLICY IF EXISTS "Teachers can view their own leave balance" ON public.teacher_leave_balances;
-CREATE POLICY "Teachers can view their own leave balance"
-ON public.teacher_leave_balances FOR SELECT
-TO authenticated
-USING (auth.uid() = teacher_id);
-
 DROP POLICY IF EXISTS "Head of School can manage all leave balances" ON public.teacher_leave_balances;
-CREATE POLICY "Head of School can manage all leave balances"
-ON public.teacher_leave_balances FOR ALL
-TO authenticated
-USING (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'head'))
-WITH CHECK (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'head'));
 
 
--- annual_leaves RLS
-ALTER TABLE public.annual_leaves ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Teachers can manage their own leave applications" ON public.annual_leaves;
-CREATE POLICY "Teachers can manage their own leave applications"
-ON public.annual_leaves FOR ALL
-TO authenticated
-USING (auth.uid() = teacher_id)
-WITH CHECK (
-    auth.uid() = teacher_id AND
-    -- Allow insert if status is Pending (default) or if cancelling a Pending request
-    -- More complex logic for updates (e.g. only reason on pending) might be better handled in application layer or specific DB functions for update
-    ( (COALESCE(OLD.status, 'Pending') = 'Pending' AND status = 'Cancelled') OR (status = 'Pending') )
-);
-
+-- annual_leaves: RLS Disabled
+ALTER TABLE public.annual_leaves DISABLE ROW LEVEL SECURITY;
+-- Ensure any pre-existing policies are removed
+DROP POLICY IF EXISTS "Teachers can view their own leave applications" ON public.annual_leaves;
+DROP POLICY IF EXISTS "Teachers can insert their own leave applications" ON public.annual_leaves;
+DROP POLICY IF EXISTS "Teachers can update reason of pending leave applications" ON public.annual_leaves;
 DROP POLICY IF EXISTS "Head of School can manage all leave applications" ON public.annual_leaves;
-CREATE POLICY "Head of School can manage all leave applications"
-ON public.annual_leaves FOR ALL
-TO authenticated
-USING (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'head'))
-WITH CHECK (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'head'));
 
 
 -- 4. Database Functions for processing leave requests (Security definer for controlled updates)
+-- These functions will handle authorization internally based on the calling user's role or ID.
 
 -- Function to approve a leave request
 CREATE OR REPLACE FUNCTION public.approve_leave_request(
@@ -122,7 +98,7 @@ RETURNS TABLE (
     remaining_balance integer
 )
 LANGUAGE plpgsql
-SECURITY DEFINER -- Important for permission handling within the function
+SECURITY DEFINER
 AS $$
 DECLARE
     v_teacher_id uuid;
@@ -131,15 +107,14 @@ DECLARE
     v_total_leaves integer;
     v_used_leaves integer;
 BEGIN
-    -- Check if reviewer is Head of School
+    -- Check if reviewer is Head of School (using users table directly)
     IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = reviewer_id_param AND role = 'head') THEN
         RETURN QUERY SELECT false, 'Unauthorized: Only Head of School can approve leaves.', NULL::integer;
         RETURN;
     END IF;
 
-    -- Get leave details
-    SELECT teacher_id, leave_date, status INTO v_teacher_id, v_leave_date, v_current_status
-    FROM public.annual_leaves WHERE id = leave_id_param;
+    SELECT al.teacher_id, al.leave_date, al.status INTO v_teacher_id, v_leave_date, v_current_status
+    FROM public.annual_leaves al WHERE al.id = leave_id_param;
 
     IF NOT FOUND THEN
         RETURN QUERY SELECT false, 'Leave request not found.', NULL::integer;
@@ -151,19 +126,15 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Check teacher's leave balance
-    SELECT total_leaves, used_leaves INTO v_total_leaves, v_used_leaves
-    FROM public.teacher_leave_balances WHERE teacher_id = v_teacher_id;
+    SELECT tlb.total_leaves, tlb.used_leaves INTO v_total_leaves, v_used_leaves
+    FROM public.teacher_leave_balances tlb WHERE tlb.teacher_id = v_teacher_id;
 
     IF NOT FOUND THEN
-        -- Attempt to create a balance entry if not found (e.g. new teacher)
         INSERT INTO public.teacher_leave_balances (teacher_id) VALUES (v_teacher_id)
         RETURNING total_leaves, used_leaves INTO v_total_leaves, v_used_leaves;
-        -- If this fails (e.g. FK constraint if teacher_id is bad), it will error out, which is fine.
     END IF;
 
     IF v_used_leaves >= v_total_leaves THEN
-        -- Update status to Rejected if no balance, even if trying to approve
         UPDATE public.annual_leaves
         SET status = 'Rejected',
             reviewed_by = reviewer_id_param,
@@ -174,7 +145,6 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Proceed with approval
     UPDATE public.annual_leaves
     SET status = 'Approved',
         reviewed_by = reviewer_id_param,
@@ -210,7 +180,6 @@ AS $$
 DECLARE
     v_current_status leave_status;
 BEGIN
-    -- Check if reviewer is Head of School
     IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = reviewer_id_param AND role = 'head') THEN
         RETURN QUERY SELECT false, 'Unauthorized: Only Head of School can reject leaves.';
         RETURN;
@@ -246,21 +215,22 @@ $$;
 -- Function to cancel a leave request (by teacher)
 CREATE OR REPLACE FUNCTION public.cancel_leave_request_by_teacher(
     leave_id_param uuid,
-    requesting_teacher_id uuid
+    requesting_teacher_id uuid -- This ID comes from auth.uid() in application layer
 )
 RETURNS TABLE (
     success boolean,
     message text
 )
 LANGUAGE plpgsql
-SECURITY DEFINER -- Or SECURITY INVOKER if RLS policies are sufficient and preferred for this path
+SECURITY DEFINER
 AS $$
 DECLARE
     v_current_status leave_status;
     v_leave_teacher_id uuid;
 BEGIN
-    SELECT teacher_id, status INTO v_leave_teacher_id, v_current_status
-    FROM public.annual_leaves WHERE id = leave_id_param;
+    -- Ownership check using the passed requesting_teacher_id
+    SELECT al.teacher_id, al.status INTO v_leave_teacher_id, v_current_status
+    FROM public.annual_leaves al WHERE al.id = leave_id_param;
 
     IF NOT FOUND THEN
         RETURN QUERY SELECT false, 'Leave request not found.';
@@ -279,8 +249,6 @@ BEGIN
 
     UPDATE public.annual_leaves
     SET status = 'Cancelled'
-    -- reviewed_by and decision_time might not be relevant for cancellation by teacher, or set them if needed
-    -- decision_time = now()
     WHERE id = leave_id_param;
 
     RETURN QUERY SELECT true, 'Leave request cancelled successfully.';
@@ -293,43 +261,29 @@ $$;
 
 
 -- Grant execute on functions to authenticated users.
--- The functions themselves check roles internally where necessary (e.g. 'head' for approve/reject).
+-- The functions themselves handle authorization using the passed reviewer_id_param or requesting_teacher_id.
 GRANT EXECUTE ON FUNCTION public.approve_leave_request(uuid, uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reject_leave_request(uuid, uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.cancel_leave_request_by_teacher(uuid, uuid) TO authenticated;
 
--- Enable real-time for annual_leaves for teachers to get updates on status
-ALTER PUBLICATION supabase_realtime ADD TABLE public.annual_leaves;
-ALTER TABLE public.annual_leaves REPLICA IDENTITY FULL;
-
--- Enable real-time for teacher_leave_balances for teachers to get updates on balance
-ALTER PUBLICATION supabase_realtime ADD TABLE public.teacher_leave_balances;
-ALTER TABLE public.teacher_leave_balances REPLICA IDENTITY FULL;
-
--- Note: Default total_leaves for new teachers
--- When a new teacher is added to the `users` table, their entry in `teacher_leave_balances`
--- needs to be created. This can be done via a trigger on `users` table insert,
--- or by ensuring the application logic creates this balance entry when a teacher user is created.
--- For simplicity, the `approve_leave_request` function includes a check to insert a balance if not found.
--- A more robust solution would be a trigger on the users table:
-/*
-CREATE OR REPLACE FUNCTION public.create_teacher_leave_balance_entry()
-RETURNS TRIGGER AS $$
+-- Enable real-time (if not already done, this is idempotent)
+DO $$
 BEGIN
-    IF NEW.role = 'teacher' THEN
-        INSERT INTO public.teacher_leave_balances (teacher_id, total_leaves, used_leaves)
-        VALUES (NEW.id, 14, 0) -- Default 14 leaves
-        ON CONFLICT (teacher_id) DO NOTHING; -- In case it somehow already exists
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.annual_leaves; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'Table public.annual_leaves already in publication.'; END;
+        BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.teacher_leave_balances; EXCEPTION WHEN duplicate_object THEN RAISE NOTICE 'Table public.teacher_leave_balances already in publication.'; END;
+    ELSE
+        RAISE WARNING 'Publication supabase_realtime does not exist. Real-time may not be configured.';
     END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+    ALTER TABLE public.annual_leaves REPLICA IDENTITY FULL;
+    ALTER TABLE public.teacher_leave_balances REPLICA IDENTITY FULL;
+END $$;
 
-CREATE TRIGGER on_new_teacher_create_leave_balance
-AFTER INSERT ON public.users
-FOR EACH ROW
-EXECUTE FUNCTION public.create_teacher_leave_balance_entry();
-*/
--- The above trigger is commented out as it's an addition to the `users` table which is existing.
--- It's provided as a suggestion for a more robust way to handle new teacher balances.
--- The current solution within `approve_leave_request` to insert if not found is a fallback.
+-- Note on new teacher balance creation:
+-- The approve_leave_request function attempts to create a balance record if not found.
+-- A trigger on the users table (as commented out previously) is a more proactive way.
+-- For now, the function-based creation is the fallback.
+-- Ensure public.users table allows read access for the function owner if SECURITY DEFINER functions need to check roles.
+-- (Typically, SECURITY DEFINER functions run as the user who DEFINED the function, often a superuser or admin role)
+-- The internal checks `FROM public.users WHERE id = reviewer_id_param AND role = 'head'` will work correctly.
+-- The `requesting_teacher_id` in `cancel_leave_request_by_teacher` is passed from the application layer (auth.uid()).

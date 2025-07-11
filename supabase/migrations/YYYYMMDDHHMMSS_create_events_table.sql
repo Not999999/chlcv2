@@ -35,9 +35,15 @@ CREATE INDEX IF NOT EXISTS idx_events_end_time ON public.events(end_time);
 CREATE INDEX IF NOT EXISTS idx_events_created_by ON public.events(created_by);
 CREATE INDEX IF NOT EXISTS idx_events_level_tags ON public.events USING GIN (level_tags); -- GIN index for array operations
 
--- RLS Policies for events table
-ALTER TABLE public.events ENABLE ROW LEVEL SECURITY;
+-- RLS Policies for events table (RLS is now disabled by default as per user request)
+-- ALTER TABLE public.events ENABLE ROW LEVEL SECURITY; -- RLS Originally Enabled
+ALTER TABLE public.events DISABLE ROW LEVEL SECURITY; -- RLS Disabled
 
+-- Commented out RLS policies for events table
+-- Ensure any pre-existing policies are removed if RLS is being turned off globally for this table
+DROP POLICY IF EXISTS "Admins and Heads can manage all events" ON public.events;
+DROP POLICY IF EXISTS "Teachers can view all events" ON public.events;
+/*
 CREATE POLICY "Admins and Heads can manage all events"
 ON public.events FOR ALL
 TO authenticated
@@ -48,6 +54,7 @@ CREATE POLICY "Teachers can view all events"
 ON public.events FOR SELECT
 TO authenticated
 USING (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'teacher'));
+*/
 
 -- Enable real-time for the events table
 DO $$
