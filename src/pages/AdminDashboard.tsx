@@ -276,61 +276,34 @@ export function AdminDashboard() {
 
   // Custom function to apply AI commands after confirmation
   const applyAICommands = async (commands: any[]) => {
-    setLoading(true)
-    let successCount = 0
-    let failCount = 0
+import { Layout } from '../components/Layout'
+import { AIButton } from '../components/AIButton'
+import { useToast } from '../components/Toast'
+import { supabase } from '../lib/supabase'
+import { getCurrentStaffUser } from '../lib/auth'
+import { Calendar, Clock, Users, BookOpen, Plus, Edit, Trash2, RotateCcw } from 'lucide-react'
+import { callOpenRouterAPI, getSystemPromptByRole } from '../lib/aiHelpers'
+import { AIAssistant } from '../components/AIAssistant'
+import { validateCommand } from '../lib/validators' // Import the validator
 
-    const validateCommand = (cmd: any): { isValid: boolean; message?: string } => {
-      if (!cmd.command) {
-        return { isValid: false, message: 'Missing command type.' }
-      }
+export function AdminDashboard() {
+  // Move these constants to the very top to avoid ReferenceError
+@@ -283,53 +288,10 @@
+     setLoading(true)
+     let successCount = 0
+     let failCount = 0
 
-      if (cmd.command === 'AddSchedule') {
-        const requiredFields = ['day', 'time', 'level', 'subject', 'teacher_id']
-        for (const field of requiredFields) {
-          if (!cmd[field] || String(cmd[field]).trim() === '') {
-            return { isValid: false, message: `AddSchedule failed: Missing or empty '${field}'.` }
-          }
-        }
-        // Basic time format validation (HH:MM)
-        if (cmd.time && !/^\d{2}:\d{2}$/.test(cmd.time)) {
-          return { isValid: false, message: `AddSchedule failed: Invalid time format for '${cmd.time}'. Expected HH:MM.`}
-        }
-        // Check if teacher_id is a valid UUID (basic check)
-        if (cmd.teacher_id && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(cmd.teacher_id)) {
-            // Allow matching by name if teacher_id is not a UUID (as AI might provide name)
-            // This will be resolved to an ID later if a match is found by name in `handleAISingleScheduleResponse` logic,
-            // but for direct command processing, we prefer UUIDs.
-            // If it's not a UUID, we assume it's a name to be resolved, or it might fail if no teacher matches.
-            // For now, we'll let it pass if not a UUID, but this could be stricter.
-        }
-      } else if (cmd.command === 'UpdateSchedule') {
-        if (!cmd.id || String(cmd.id).trim() === '') {
-          return { isValid: false, message: `UpdateSchedule failed: Missing 'id'.` }
-        }
-        const updateFields = { ...cmd }
-        delete updateFields.command
-        delete updateFields.id
-        if (Object.keys(updateFields).length === 0) {
-          return { isValid: false, message: `UpdateSchedule failed for ID ${cmd.id}: No fields provided for update.` }
-        }
-        if (updateFields.time && !/^\d{2}:\d{2}$/.test(updateFields.time)) {
-            return { isValid: false, message: `UpdateSchedule failed for ID ${cmd.id}: Invalid time format for '${updateFields.time}'. Expected HH:MM.`}
-        }
-      } else if (cmd.command === 'DeleteSchedule') {
-        if (!cmd.id || String(cmd.id).trim() === '') {
-          return { isValid: false, message: `DeleteSchedule failed: Missing 'id'.` }
-        }
-      } else {
-        return { isValid: false, message: `Unknown command type: ${cmd.command}` }
-      }
-      return { isValid: true }
-    }
+    // validateCommand is now imported from ../lib/validators
 
     for (const cmd of commands) {
       const validationResult = validateCommand(cmd)
       if (!validationResult.isValid) {
-        showToast(validationResult.message || `Invalid command: ${cmd.command}`, 'error')
+        const errorMessage = validationResult.message || `Invalid command structure for: ${cmd.command}`
+        showToast(errorMessage, 'error')
+        console.warn('Invalid AI Schedule Command Received:', {
+          command: cmd,
+          reason: errorMessage
+        })
         failCount++
         continue // Skip this command
       }
