@@ -13,17 +13,17 @@ import Maintenance from './pages/Maintenance'
 import ReportViewer from './pages/ReportViewer'
 import { IntroSplash } from './components/IntroSplash'
 import { MaintenanceProvider, useMaintenanceStatus } from './contexts/MaintenanceContext'
-import { getCurrentStaffUser } from './lib/auth' // To get user role
+import { ThemeProvider } from './contexts/ThemeContext' // Import ThemeProvider
+import ThemeApplicator from './components/ThemeApplicator' // Import ThemeApplicator
+import { getCurrentStaffUser } from './lib/auth'
 
-// Updated MaintenanceGuard to use the context
+// Updated MaintenanceGuardContent to integrate ThemeApplicator
 function MaintenanceGuardContent({ children }: { children: React.ReactNode }) {
   const { isMaintenanceModeActive, isLoadingMaintenanceStatus } = useMaintenanceStatus();
   const location = window.location.pathname;
   const user = getCurrentStaffUser();
 
   if (isLoadingMaintenanceStatus) {
-    // Full page loader while fetching maintenance status.
-    // IntroSplash might have finished by the time this context loads.
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-white z-[9999]">
         <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-emerald-500"></div>
@@ -34,31 +34,41 @@ function MaintenanceGuardContent({ children }: { children: React.ReactNode }) {
 
   if (isMaintenanceModeActive) {
     if (user?.role === 'creator') {
-      // Creator sees the site with a banner
+      // Creator sees the site with a banner, wrapped by the chosen theme's layout
       return (
-        <>
-          <div className="fixed top-0 left-0 right-0 bg-red-600 text-white p-3 text-center z-[9998] shadow-lg">
-            <p className="text-sm font-semibold">
-              ⚠️ MAINTENANCE MODE IS ACTIVE. Regular users are seeing the maintenance page. You have full access.
-            </p>
-          </div>
-          <div className="pt-12"> {/* Add padding to offset the banner */}
-            {children}
-          </div>
-        </>
+        <ThemeApplicator>
+          <> {/* Using fragment to group banner and content for ThemeApplicator's children */}
+            <div className="fixed top-0 left-0 right-0 bg-red-600 text-white p-3 text-center z-[9998] shadow-lg">
+              <p className="text-sm font-semibold">
+                ⚠️ MAINTENANCE MODE IS ACTIVE. Regular users are seeing the maintenance page. You have full access.
+              </p>
+            </div>
+            {/*
+              The ThemeApplicator will provide its own Layout (Classic or Animated).
+              That Layout needs to handle the children correctly.
+              If the banner is outside the themed Layout, padding needs to be applied carefully.
+              Assuming the Layouts provided by ThemeApplicator will render children into their main content area.
+              The pt-12 might need to be applied inside the Layout components or handled by them if they are aware of this banner.
+              For now, applying it here to the children of ThemeApplicator.
+            */}
+            <div className="pt-12">
+              {children} {/* children are the Routes */}
+            </div>
+          </>
+        </ThemeApplicator>
       );
     } else if (location !== '/creator-login') {
-      // Non-creators (and not on creator login) see the Maintenance page
+      // Non-creators see the Maintenance page (unthemed or simply styled)
       return <Maintenance />;
     }
   }
 
-  // If not in maintenance mode, or if creator on creator-login, render children normally
-  return <>{children}</>;
+  // If not in maintenance mode, or special cases like creator on creator-login
+  // Wrap the normal content flow with ThemeApplicator
+  return <ThemeApplicator>{children}</ThemeApplicator>;
 }
 
 function App() {
-  // Always show splash on every refresh (do not use sessionStorage)
   const [showSplash, setShowSplash] = React.useState(true);
 
   const handleSplashFinish = React.useCallback(() => {
@@ -69,11 +79,12 @@ function App() {
     <ToastProvider>
       {showSplash && <IntroSplash onFinish={handleSplashFinish} />}
       <Router>
-        <MaintenanceProvider> {/* Provider wraps routes and guard */}
-          <MaintenanceGuardContent> {/* Renamed to avoid conflict and use hook */}
-            <Routes>
-              {/* Public Routes */}
-              <Route path="/creator-login" element={<CreatorLogin />} />
+        <MaintenanceProvider>
+          <ThemeProvider> {/* ThemeProvider wraps MaintenanceGuardContent and its children */}
+            <MaintenanceGuardContent>
+              <Routes>
+                {/* Public Routes */}
+                <Route path="/creator-login" element={<CreatorLogin />} />
             <Route path="/login" element={<StaffLogin />} />
             
             {/* Protected Routes */}

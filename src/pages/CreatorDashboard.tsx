@@ -5,12 +5,14 @@ import { useToast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
 import { hashPassword } from '../lib/auth'
 import { getCurrentStaffUser } from '../lib/auth'
-import { Plus, Edit, Trash2, Bot } from 'lucide-react'
+import { Plus, Edit, Trash2, Bot, Palette } from 'lucide-react' // Added Palette
 import { DiagnosticPanel } from '../components/DiagnosticPanel'
+import { useTheme, ThemeName } from '../contexts/ThemeContext' // Import ThemeContext
 
 export function CreatorDashboard() {
   const { showToast } = useToast()
   const user = getCurrentStaffUser()
+  const { currentTheme, setTheme, isLoadingTheme, themeError } = useTheme() // Use theme context
   const [users, setUsers] = React.useState<any[]>([])
   const [aiSettings, setAiSettings] = React.useState<any>(null)
   const [loading, setLoading] = React.useState(true)
@@ -43,10 +45,19 @@ export function CreatorDashboard() {
   const [aiAssistantEnabled, setAIAssistantEnabled] = useState(true)
   const [testMode, setTestMode] = useState(false)
   const [verbosity, setVerbosity] = useState(5)
+  // Local state for theme toggle to provide immediate feedback before context/db updates
+  const [selectedDisplayTheme, setSelectedDisplayTheme] = useState<ThemeName>(currentTheme);
+
+  React.useEffect(() => {
+    // Sync local display theme if context changes (e.g. from another tab via real-time)
+    setSelectedDisplayTheme(currentTheme);
+  }, [currentTheme]);
 
   React.useEffect(() => {
     loadCreatorData()
-  }, [])
+    // No need to load theme here, ThemeProvider handles it.
+    // We just consume it via useTheme().
+  }, []) // Removed loadCreatorData from here, it's called inside.
 
   const loadCreatorData = async () => {
     setLoading(true) // Combined loading state
@@ -383,18 +394,56 @@ export function CreatorDashboard() {
             <button onClick={() => setShowSystemSettings(v => !v)} className="text-xs text-blue-600 underline">{showSystemSettings ? 'Hide' : 'Show'}</button>
           </div>
           {showSystemSettings && (
-            <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={aiAssistantEnabled} onChange={e => setAIAssistantEnabled(e.target.checked)} />
-                <span className="text-sm">AI Assistant</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={testMode} onChange={e => setTestMode(e.target.checked)} />
-                <span className="text-sm">Test Mode</span>
-              </label>
+            <div className="space-y-4">
+              {/* Theme Selector */}
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Verbosity: {verbosity}</label>
-                <input type="range" min={1} max={10} value={verbosity} onChange={e => setVerbosity(Number(e.target.value))} className="w-full" />
+                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                  <Palette className="h-4 w-4 mr-2 text-gray-500"/>
+                  Application Theme
+                </label>
+                <div className="flex space-x-2 rounded-md bg-gray-100 p-1">
+                  {(['classic', 'animated'] as ThemeName[]).map((themeOption) => (
+                    <button
+                      key={themeOption}
+                      onClick={async () => {
+                        setSelectedDisplayTheme(themeOption); // Optimistic UI update
+                        try {
+                          await setTheme(themeOption);
+                          showToast(`Theme switched to ${themeOption.charAt(0).toUpperCase() + themeOption.slice(1)}`, 'success');
+                        } catch (err) {
+                           showToast(themeError || 'Failed to switch theme on server.', 'error');
+                           setSelectedDisplayTheme(currentTheme); // Revert optimistic update on error
+                        }
+                      }}
+                      disabled={isLoadingTheme}
+                      className={`w-full px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1
+                        ${selectedDisplayTheme === themeOption
+                          ? 'bg-purple-600 text-white shadow-sm'
+                          : 'bg-transparent text-gray-600 hover:bg-purple-100 hover:text-purple-700'}
+                        ${isLoadingTheme ? 'opacity-50 cursor-not-allowed' : ''}
+                      `}
+                    >
+                      {themeOption === 'classic' ? 'Classic (Default)' : 'Animated Theme'}
+                    </button>
+                  ))}
+                </div>
+                {isLoadingTheme && <p className="text-xs text-purple-600 mt-1 animate-pulse">Switching theme...</p>}
+                {themeError && <p className="text-xs text-red-600 mt-1">{themeError}</p>}
+              </div>
+
+              <div className="border-t pt-4 space-y-3"> {/* Other system settings below theme */}
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={aiAssistantEnabled} onChange={e => setAIAssistantEnabled(e.target.checked)} />
+                  <span className="text-sm">AI Assistant</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={testMode} onChange={e => setTestMode(e.target.checked)} />
+                  <span className="text-sm">Test Mode</span>
+                </label>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Verbosity: {verbosity}</label>
+                  <input type="range" min={1} max={10} value={verbosity} onChange={e => setVerbosity(Number(e.target.value))} className="w-full" />
+                </div>
               </div>
             </div>
           )}
