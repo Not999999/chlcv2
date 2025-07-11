@@ -227,10 +227,16 @@ export const submitLeaveApplication = async (
 };
 
 /**
- * Fetches all pending leave applications for admin/head view.
+ * Fetches pending leave applications for admin/head view with pagination.
  */
-export const getPendingLeaveApplicationsForAdmin = async (): Promise<AnnualLeaveApplication[]> => {
-  const { data, error } = await supabase
+export const getPendingLeaveApplicationsForAdmin = async (
+  page: number = 1,
+  pageSize: number = 10
+): Promise<{ applications: AnnualLeaveApplication[], count: number | null }> => {
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data, error, count } = await supabase
     .from('annual_leaves')
     .select(`
       id,
@@ -245,15 +251,16 @@ export const getPendingLeaveApplicationsForAdmin = async (): Promise<AnnualLeave
       reviewed_by,
       users_reviewed_by:users!annual_leaves_reviewed_by_fkey ( name ),
       decision_time
-    `)
+    `, { count: 'exact' })
     .eq('status', 'Pending')
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: true })
+    .range(from, to);
 
   if (error) {
     console.error('Error fetching pending leave applications:', error);
     throw error;
   }
-  return data as AnnualLeaveApplication[];
+  return { applications: (data || []) as AnnualLeaveApplication[], count };
 };
 
 /**
@@ -371,32 +378,44 @@ export interface TeacherLeaveBalanceDetails extends LeaveBalance {
     teacher_name: string;
 }
 
-export const getAllTeacherLeaveBalancesWithDetails = async (): Promise<TeacherLeaveBalanceDetails[]> => {
-    const { data, error } = await supabase
+export const getAllTeacherLeaveBalancesWithDetails = async (
+  page: number = 1,
+  pageSize: number = 10
+): Promise<{ balances: TeacherLeaveBalanceDetails[], count: number | null }> => {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await supabase
         .from('teacher_leave_balances')
         .select(`
             teacher_id,
             total_leaves,
             used_leaves,
             user:users ( name )
-        `);
+        `, { count: 'exact' })
+        .order('teacher_id') // Or sort by user.name if possible/needed, though requires careful handling
+        .range(from, to);
 
     if (error) {
         console.error('Error fetching all teacher leave balances:', error);
         throw error;
     }
 
-    return (data || []).map(item => {
-        const total = item.total_leaves || 0;
-        const used = item.used_leaves || 0;
+    const balances = (data || []).map(item => {
+        const total = item.total_leaves || 0; // Default to 0 if null
+        const used = item.used_leaves || 0;   // Default to 0 if null
+        // Attempt to fetch system default if total_leaves is 0 or null,
+        // but this might be slow here. Better to ensure DB has sensible defaults or values.
+        // For now, just use the value or 0.
         return {
             teacher_id: item.teacher_id,
-            teacher_name: (item.user as any)?.name || 'Unknown Teacher', // Type assertion for joined user
+            teacher_name: (item.user as any)?.name || 'Unknown Teacher',
             total_leaves: total,
             used_leaves: used,
             remaining_leaves: total - used,
         };
     });
+    return { balances, count };
 };
 
 

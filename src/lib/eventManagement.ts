@@ -61,9 +61,15 @@ export const getEvents = async (filters?: EventFilters): Promise<EventData[]> =>
   let query = supabase
     .from('events')
     .select(`
-        *,
+        id,
+        title,
+        description,
+        start_time,
+        end_time,
+        level_tags,
+        created_by,
         users!events_created_by_fkey (name)
-    `) // Adjust FK name if needed for creator
+    `) // Selected specific columns
     .order('start_time', { ascending: true });
 
   if (filters?.dateRangeStart) {
@@ -115,9 +121,9 @@ export const updateEvent = async (eventId: string, updates: Partial<Omit<EventDa
     })
     .eq('id', eventId)
     .select(`
-        *,
+        id, title, description, start_time, end_time, level_tags, created_by, created_at, updated_at,
         users (name)
-    `)
+    `) // Return more complete data on create/update
     .single();
 
   if (error) {

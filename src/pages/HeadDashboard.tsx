@@ -35,36 +35,52 @@ export function HeadDashboard() {
 
   const today = new Date().toLocaleDateString('en-CA')
 
-  const loadAllHeadData = React.useCallback(async () => {
-    setLoading(true);
-    setLoadingLeaveApps(true);
+  const loadAllHeadData = React.useCallback(async (isInitialLoad = true) => {
+    if (isInitialLoad) {
+      setLoading(true); // For general sections
+      setLoadingLeaveApps(true); // For pending leaves, considered critical for Head
+    }
+
+    const criticalPromises = [
+      loadTeacherStatus(), // This fetches all teachers & all attendance; needs future pagination for teacher list itself
+      loadPendingLeaveApplications()
+    ];
 
     try {
-      await Promise.all([
-        loadTeacherStatus(),
-        loadBehaviorReports(),
-        loadActiveSessions(),
-        loadPendingLeaveApplications()
-      ]);
+      await Promise.all(criticalPromises);
     } catch (error) {
-      console.error("Error loading head dashboard data:", error);
+      console.error("Error loading critical head dashboard data:", error);
+      // Individual functions should show toasts for their specific errors
     } finally {
-      setLoading(false);
+      if (isInitialLoad) {
+        setLoading(false);
+      }
+      // setLoadingLeaveApps is handled by loadPendingLeaveApplications
       setLastRefresh(new Date());
     }
-  }, []);
+
+    // Stagger non-critical data if it's an initial load
+    if (isInitialLoad) {
+      setTimeout(() => {
+        loadBehaviorReports(); // Already limited, but good to stagger
+        loadActiveSessions();    // Usually small, but can be staggered
+      }, 700); // Slightly longer delay for Head dashboard non-critical items
+    }
+  }, [loadTeacherStatus, loadBehaviorReports, loadActiveSessions, loadPendingLeaveApplications]); // Dependencies are stable callbacks
 
   React.useEffect(() => {
-    loadAllHeadData();
+    loadAllHeadData(true); // Initial full load with staggering
     
     const interval = setInterval(() => {
+      // Refresh critical data more frequently or all data based on tab
       loadTeacherStatus();
       if (activeTab === 'classes') loadActiveSessions();
       if (activeTab === 'leaves') loadPendingLeaveApplications();
+      // Behavior reports might not need to auto-refresh as often, or could be manual.
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [activeTab, loadAllHeadData]);
+  }, [activeTab, loadAllHeadData, loadTeacherStatus, loadActiveSessions, loadPendingLeaveApplications]); // Added individual loaders to dep array
 
   const loadTeacherStatus = async () => {
     try {
