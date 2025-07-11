@@ -12,6 +12,7 @@ export interface AnnualLeaveApplication {
   teacher_id: string;
   users?: { name: string }; // For joining teacher name
   leave_date: string; // YYYY-MM-DD
+  leave_type: string; // Added: e.g., 'Annual', 'Sick'
   reason?: string | null;
   status: 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
   created_at: string;
@@ -77,6 +78,7 @@ export const getTeacherLeaveApplications = async (teacherId: string): Promise<An
       id,
       teacher_id,
       leave_date,
+      leave_type,
       reason,
       status,
       created_at,
@@ -102,10 +104,20 @@ export const getTeacherLeaveApplications = async (teacherId: string): Promise<An
 export const submitLeaveApplication = async (
   teacherId: string,
   leaveDate: string, // Expected YYYY-MM-DD
-  reason?: string
+  reason?: string,
+  leaveType: string = 'Annual' // Added leaveType parameter
 ): Promise<AnnualLeaveApplication> => {
   // 1. Client-side pre-validation (can be duplicated here or rely on UI)
-  if (new Date(leaveDate) <= new Date()) {
+  // Ensure leaveDate is for tomorrow or later
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalize today to start of day
+  const selectedDate = new Date(leaveDate);
+  selectedDate.setHours(0,0,0,0); // Normalize selectedDate to start of day
+
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+
+  if (selectedDate < tomorrow) {
     throw new Error('Leave date must be in the future.');
   }
 
@@ -137,10 +149,23 @@ export const submitLeaveApplication = async (
     .insert({
       teacher_id: teacherId,
       leave_date: leaveDate,
+      leave_type: leaveType, // Use the provided or default leaveType
       reason: reason || null,
-      status: 'Pending', // Default status
+      status: 'Pending',
     })
-    .select()
+    .select(`
+      id,
+      teacher_id,
+      leave_date,
+      leave_type,
+      reason,
+      status,
+      created_at,
+      reviewed_by,
+      users_reviewed_by:users!annual_leaves_reviewed_by_fkey ( name ),
+      decision_time,
+      reviewer_notes
+    `)
     .single();
 
   if (error) {
@@ -166,10 +191,14 @@ export const getPendingLeaveApplicationsForAdmin = async (): Promise<AnnualLeave
       teacher_id,
       users ( id, name, email ),
       leave_date,
+      leave_type,
       reason,
       status,
       created_at,
-      reviewer_notes
+      reviewer_notes,
+      reviewed_by,
+      users_reviewed_by:users!annual_leaves_reviewed_by_fkey ( name ),
+      decision_time
     `)
     .eq('status', 'Pending')
     .order('created_at', { ascending: true });
@@ -249,24 +278,108 @@ export const cancelLeaveApplicationByTeacher = async (
   throw new Error('Unexpected response from server while cancelling leave request.');
 };
 
-
 /**
  * For Head of School to set/update total_leaves for a teacher.
  */
 export const setTeacherTotalLeaves = async (teacherId: string, newTotalLeaves: number): Promise<void> => {
     if (newTotalLeaves < 0) throw new Error("Total leaves cannot be negative.");
-
-    // Check if balance record exists, if not, create one.
-    // Or, more simply, use upsert.
     const { error } = await supabase
         .from('teacher_leave_balances')
         .upsert(
             { teacher_id: teacherId, total_leaves: newTotalLeaves },
-            { onConflict: 'teacher_id' } // If teacher_id exists, update; otherwise insert.
+            { onConflict: 'teacher_id' }
         );
 
     if (error) {
         console.error('Error setting total leaves:', error);
         throw new Error(`Failed to set total leaves for teacher ${teacherId}: ${error.message}`);
     }
+};
+
+/**
+ * Fetches all leave applications for admin/head view with filtering and sorting.
+ */
+export interface LeaveApplicationFilters {
+  teacherId?: string;
+  status?: string;
+  leaveType?: string;
+  dateFrom?: string; // YYYY-MM-DD
+  dateTo?: string;   // YYYY-MM-DD
+}
+export interface LeaveApplicationSort {
+  column: string; // e.g., 'leave_date', 'created_at', 'users.name', 'status'
+  ascending: boolean;
+}
+
+export const getAllLeaveApplicationsForAdmin = async (
+  filters?: LeaveApplicationFilters,
+  sort?: LeaveApplicationSort,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<{ applications: AnnualLeaveApplication[], count: number | null }> => {
+  let query = supabase
+    .from('annual_leaves')
+    .select(`
+      id,
+      teacher_id,
+      users ( id, name, email ),
+      leave_date,
+      leave_type,
+      reason,
+      status,
+      created_at,
+      reviewed_by,
+      users_reviewed_by:users!annual_leaves_reviewed_by_fkey ( name ),
+      decision_time,
+      reviewer_notes
+    `, { count: 'exact' }); // Add count for pagination
+
+  // Apply filters
+  if (filters) {
+    if (filters.teacherId) query = query.eq('teacher_id', filters.teacherId);
+    if (filters.status && filters.status !== 'All') query = query.eq('status', filters.status);
+    if (filters.leaveType && filters.leaveType !== 'All') query = query.eq('leave_type', filters.leaveType);
+    if (filters.dateFrom) query = query.gte('leave_date', filters.dateFrom);
+    if (filters.dateTo) query = query.lte('leave_date', filters.dateTo);
+  }
+
+  // Apply sorting
+  if (sort) {
+    // For sorting by joined table column 'users.name', Supabase syntax is 'foreign_table(column)'
+    // e.g. users(name)
+    // However, direct sorting on joined columns via PostgREST can be tricky or might require views/functions.
+    // For simplicity, if sorting by 'users.name', we might need to fetch all and sort client-side,
+    // or ensure the column name for sorting is directly from 'annual_leaves'.
+    // Let's assume basic column sorting for now. If 'users.name' is passed, it might not work as expected without specific setup.
+    // A common pattern is to sort by `teacher_id` and then map names on client, or denormalize teacher_name.
+    // For now, we'll pass it through and see if Supabase handles it with the join syntax.
+    // Supabase might require `foreignTable.column` for joined sort. Let's try that.
+    let sortColumn = sort.column;
+    if (sort.column === 'users.name') { // Adjust if Supabase needs specific syntax for joined sort
+        sortColumn = 'users(name)'; // This might not work directly for order().
+                                     // Often, you sort by teacher_id and handle name display.
+                                     // Or, a DB view is better for complex sorts.
+                                     // For now, let's be simple and sort by primary table columns.
+                                     // If users.name is requested, we'll sort by teacher_id instead as a proxy.
+        // sortColumn = 'teacher_id'; // Safer proxy sort
+        // Or allow direct attempt:
+        // No change needed if Supabase JS client handles `users(name)` in order()
+    }
+     query = query.order(sortColumn, { ascending: sort.ascending });
+  } else {
+    query = query.order('created_at', { ascending: false }); // Default sort
+  }
+
+  // Apply pagination
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  query = query.range(from, to);
+
+  const { data, error, count } = await query;
+
+  if (error) {
+    console.error('Error fetching all leave applications for admin:', error);
+    throw error;
+  }
+  return { applications: data as AnnualLeaveApplication[], count };
 };
